@@ -20,7 +20,7 @@ include("convexify.jl")              # Hessian-Konvexifizierung
 include("qp_interface.jl")           # Schnittstelle zu QP-Solvern
 include("filter_linesearch.jl")      # Filterbasierte Line-Search
 include("sqp_method.jl")             # Haupt-SQP-Algorithmus
-include("test_problems.jl")          # Testprobleme
+include("testproblems.jl")           # Testprobleme
 include("ipopt_jump.jl")             # Nutzung von Ipopt über JuMP
 include("benchmarking.jl")           # Benchmarking-Funktionen
 
