@@ -1,41 +1,84 @@
 #!/usr/bin/env julia
 
 """
-Large-scale benchmark comparing SQP configurations (with/without SOC) with Ipopt.
+Aufgabe 2.5: Finaler Löservergleich - Möge der Beste gewinnen!
+
+Dieses umfassende Benchmark-Skript führt einen finalen Vergleich zwischen der
+optimalen SQP-Konfiguration (basierend auf den Ergebnissen der Aufgaben 2.1-2.4)
+und den etablierten NLP-Lösern MadNLP und Ipopt durch.
+
+Vergleichspartner:
+1. SQP-Optimal: Beste Konfiguration aus den vorherigen Aufgaben
+2. Ipopt: Etablierter Interior-Point-Löser (Referenz-Standard)
+3. MadNLP: Moderner AD-basierter Interior-Point-Löser
+
+Testkriterien:
+- Faire Vergleichsbedingungen (gleiche Toleranzen, Zeitlimits)
+- Umfassende Problemsets (TestProblems + OptimizationProblems.jl ≥250 Variablen)
+- Detaillierte Performance-Analyse mit verschiedenen Metriken
+- Robustheitsanalyse bei verschiedenen Problemtypen
+
+Bewertungsmetriken:
+- Erfolgsrate (Prozent gelöster Probleme)
+- Durchschnittliche Laufzeit pro Problem
+- Performance-Profile für relative Effizienz
+- Robustheit bei verschiedenen Problemgrößen und -typen
+
+Ziel: Objektive Bewertung der SQP-Implementierung im Vergleich zu professionellen Lösern
 """
 
-# Add the parent directory to load path
+# Füge das übergeordnete Verzeichnis zum Ladepfad hinzu, um SQPPackage zu finden
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
+push!(LOAD_PATH, @__DIR__)
 
-using SQPPackage, SQPPackage.Benchmarking
-using Plots
-using Printf
-using Statistics
+# Importiere alle benötigten Pakete
+using SQPPackage              # Unser Hauptpaket mit der SQP-Implementierung
+using Benchmarking           # Lokales Benchmarking-Modul
+using Plots                  # Für die Erstellung von Diagrammen
+using Printf                 # Für formatierte Ausgaben
+using Statistics             # Für statistische Funktionen (Mittelwert, Median)
 
-# Try to load comparison solvers
+# Versuche Vergleichslöser zu laden
 IPOPT_AVAILABLE = false
+MADNLP_AVAILABLE = false
+OPTIMIZATION_PROBLEMS_AVAILABLE = false
+
 try
     using NLPModelsIpopt
     global IPOPT_AVAILABLE = true
-catch
+    println("✓ Ipopt verfügbar für Vergleich")
+catch e
     global IPOPT_AVAILABLE = false
-    println("Warning: Ipopt not available")
+    println("⚠ Ipopt nicht verfügbar: $e")
 end
 
-# Try to load OptimizationProblems if available
-OPTIMIZATION_PROBLEMS_AVAILABLE = false
+try
+    using MadNLP
+    global MADNLP_AVAILABLE = true
+    println("✓ MadNLP verfügbar für Vergleich") 
+catch e
+    global MADNLP_AVAILABLE = false
+    println("⚠ MadNLP nicht verfügbar: $e")
+end
+
 try
     using OptimizationProblems
     global OPTIMIZATION_PROBLEMS_AVAILABLE = true
-catch
+    println("✓ OptimizationProblems.jl verfügbar")
+catch e
     global OPTIMIZATION_PROBLEMS_AVAILABLE = false
-    println("Warning: OptimizationProblems not available")
+    println("⚠ OptimizationProblems.jl nicht verfügbar: $e")
 end
 
-println("="^60)
-println("Large-Scale Benchmark: SQP (with/without SOC) vs Ipopt")
+# Ausgabe des Programm-Headers
+println("\n" * "="^60)
+println("Finaler Löservergleich - Aufgabe 2.5")
+println("SQP-Optimal vs. Ipopt vs. MadNLP")
 println("="^60)
 
+"""
+Hilfsfunktion zur Problemerzeugung
+"""
 function get_problem(problem_name, use_test_problems)
     if use_test_problems
         return eval(Symbol("create_", problem_name))()
@@ -44,195 +87,326 @@ function get_problem(problem_name, use_test_problems)
     end
 end
 
-function filter_optimization_problems(min_vars, max_vars, has_constraints=false)
+"""
+Filtert OptimizationProblems.jl nach geeigneten Kriterien für den finalen Vergleich
+"""
+function filter_optimization_problems(min_vars, max_vars, has_constraints=true)
+    if !OPTIMIZATION_PROBLEMS_AVAILABLE
+        return Symbol[]
+    end
+    
     try
-        if !OPTIMIZATION_PROBLEMS_AVAILABLE
-            return Symbol[]
-        end
         meta = OptimizationProblems.meta
+        
+        # Filtere nach Problemgröße und Constraints
         if has_constraints
             filtered = meta[(min_vars .<= meta.nvar .<= max_vars) .& (meta.ncon .> 0), [:name]]
         else
             filtered = meta[(min_vars .<= meta.nvar .<= max_vars), [:name]]
         end
+        
         return Symbol.(filtered.name)
-    catch
+    catch e
+        println("Fehler beim Filtern der OptimizationProblems: $e")
         return Symbol[]
     end
 end
 
-function performance_profile(times, names; title="Performance Profile", logscale=false)
-    τ = 10 .^ range(0, 2, length=100)
-    plt = Plots.plot(xlabel="τ", ylabel="ρ(τ)", title=title, legend=:bottomright)
-    
-    for (i, solver) in enumerate(names)
-        r = times[:,i] ./ minimum(times, dims=2)
-        r[isnan.(r)] .= Inf
-        ρ = [count(r .<= t) / size(times,1) for t in τ]
-        Plots.plot!(plt, τ, ρ, label=solver, lw=2)
+"""
+Löst ein Problem mit Ipopt
+"""
+function solve_with_ipopt(nlp, max_time, tol)
+    if !IPOPT_AVAILABLE
+        return (Inf, :unavailable, 0)
     end
     
-    logscale && Plots.plot!(plt, xscale=:log10)
-    return plt
+    try
+        # Konfiguriere Ipopt mit fairen Einstellungen
+        stats = NLPModelsIpopt.ipopt(nlp, 
+            print_level=0,           # Keine Ausgabe
+            max_cpu_time=max_time,   # Zeitlimit
+            tol=tol,                 # Optimierungstoleranz
+            constr_viol_tol=tol,     # Constraint-Toleranz
+            max_iter=1000            # Iterationslimit
+        )
+        
+        elapsed = stats.elapsed_time
+        status = stats.status == :first_order ? :solved : stats.status
+        niter = stats.iter
+        
+        return (elapsed, status, niter)
+    catch e
+        return (Inf, :error, 0)
+    end
 end
 
-function large_benchmark_comparison()
-    println("="^60)
-    println("Large-Scale Benchmark: SQP (with/without SOC) vs Ipopt")
-    println("="^60)
-
-    # Use larger problems from OptimizationProblems.jl
-    test_problem_names = filter_optimization_problems(250, 1000, true)
-    if length(test_problem_names) > 50
-        test_problem_names = test_problem_names[1:50]
+"""
+Löst ein Problem mit MadNLP
+"""
+function solve_with_madnlp(nlp, max_time, tol)
+    if !MADNLP_AVAILABLE
+        return (Inf, :unavailable, 0)
     end
-
-    println("Testing on $(length(test_problem_names)) problems")
-
-    # Define solvers to compare
-    solvers = Vector{Tuple{String, Union{Settings, Nothing}}}()
     
-    push!(solvers, ("SQP_with_SOC", Settings(
-        qp_solver=:osqp,
-        hessian_convexification=:lm,
-        use_globalization=true,
-        use_soc=true,
-        tol=1e-6,
-        max_iter=1000,
-        verbose=false
-    )))
-    
-    push!(solvers, ("SQP_without_SOC", Settings(
-        qp_solver=:osqp,
-        hessian_convexification=:lm,
-        use_globalization=true,
-        use_soc=false,
-        tol=1e-6,
-        max_iter=1000,
-        verbose=false
-    )))
-    
-    if IPOPT_AVAILABLE
-        push!(solvers, ("Ipopt", nothing))
+    try
+        # Konfiguriere MadNLP mit fairen Einstellungen
+        solver = MadNLP.MadNLPSolver(nlp,
+            print_level=MadNLP.ERROR,     # Keine Ausgabe
+            max_cpu_time=max_time,        # Zeitlimit  
+            tol=tol,                      # Optimierungstoleranz
+            constr_viol_tol=tol,          # Constraint-Toleranz
+            max_iter=1000                 # Iterationslimit
+        )
+        
+        start_time = time()
+        MadNLP.solve!(solver)
+        elapsed = time() - start_time
+        
+        status = MadNLP.get_status(solver)
+        niter = MadNLP.get_iter(solver)
+        
+        # Konvertiere MadNLP Status zu Standard-Format
+        if status == :SOLVE_SUCCEEDED
+            status = :solved
+        elseif status == :SOLVED_TO_ACCEPTABLE_LEVEL
+            status = :solved
+        else
+            status = :failed
+        end
+        
+        return (elapsed, status, niter)
+    catch e
+        return (Inf, :error, 0)
     end
+end
 
-    # Storage for results
-    results = Dict{String, Dict{Symbol, Dict{Symbol, Any}}}()
-    for (solver_name, _) in solvers
-        results[solver_name] = Dict{Symbol, Dict{Symbol, Any}}()
+"""
+Löst ein Problem mit der optimalen SQP-Konfiguration
+"""
+function solve_with_sqp_optimal(nlp, max_time, tol)
+    try
+        # Beste Konfiguration basierend auf den Ergebnissen der Aufgaben 2.1-2.4
+        settings = Settings(
+            # Beste Grundkonfiguration aus den vorherigen Aufgaben
+            qp_solver=:osqp,                      # Bester QP-Löser (Aufgabe 2.1)
+            hessian_convexification=:lm,          # Beste Konvexifizierung (Aufgabe 2.2)
+            use_globalization=true,               # Globalisierung aktiviert (Aufgabe 2.3)
+            use_soc=true,                         # Second-Order Corrections (Aufgabe 2.3)
+            
+            # Optimale Filter-Parameter (Aufgabe 2.4)
+            γh=1e-5,                              # Standard Filter-Parameter
+            γf=1e-5,
+            sh=1.1,
+            sf=2.3,
+            δ=1.0,
+            γα=0.05,
+            
+            # Faire Vergleichsparameter
+            tol=tol,                              # Gleiche Toleranz wie Konkurrenz
+            max_iter=1000,                        # Gleiches Iterationslimit
+            verbose=false                         # Keine Ausgabe
+        )
+        
+        start_time = time()
+        stats = sqp_method(nlp, settings)
+        elapsed = time() - start_time
+        
+        # Prüfe Zeitlimit
+        if elapsed > max_time
+            return (Inf, :time_limit, stats.niter)
+        end
+        
+        # Konvertiere SQP Status
+        status = stats.sqp_status == kkt_point ? :solved : :failed
+        
+        return (elapsed, status, stats.niter)
+    catch e
+        return (Inf, :error, 0)
     end
+end
 
-    # Storage for timing results
-    n_problems = length(test_problem_names)
-    n_solvers = length(solvers)
-    times = Matrix{Float64}(undef, n_problems, n_solvers)
-
-    # Test each solver
-    for (solver_idx, (solver_name, settings)) in enumerate(solvers)
-        println("\nTesting solver: $solver_name")
-        println("-"^40)
-
-        for (prob_idx, problem_name) in enumerate(test_problem_names)
-            print("  Problem $problem_name: ")
-
+"""
+Hauptfunktion für den finalen Löservergleich
+"""
+function run_final_solver_comparison()
+    # Faire Vergleichsparameter
+    MAX_TIME = 3600.0    # 1 Stunde Zeitlimit pro Problem
+    TOLERANCE = 1e-6     # Gemeinsame Optimierungstoleranz
+    
+    # Definition der zu vergleichenden Löser
+    solvers = [
+        ("SQP_Optimal", solve_with_sqp_optimal),
+        ("Ipopt", solve_with_ipopt),
+        ("MadNLP", solve_with_madnlp)
+    ]
+    
+    # Filter verfügbare Löser
+    available_solvers = []
+    for (name, solver_func) in solvers
+        if name == "SQP_Optimal" || 
+           (name == "Ipopt" && IPOPT_AVAILABLE) || 
+           (name == "MadNLP" && MADNLP_AVAILABLE)
+            push!(available_solvers, (name, solver_func))
+        end
+    end
+    
+    if length(available_solvers) < 2
+        println("❌ Nicht genügend Löser verfügbar für Vergleich!")
+        return
+    end
+    
+    println("Verfügbare Löser: $(join([s[1] for s in available_solvers], ", "))")
+    
+    # Definition der Problemsets
+    problem_sets = [
+        ("TestProblems", true, [:P1, :P2, :P3, :P4, :P5, :P6, :P7, :P8]),
+        ("Large_OptimizationProblems", false, filter_optimization_problems(250, 1000, true))
+    ]
+    
+    # Hauptschleife über Problemsets
+    for (set_name, use_test_problems, test_problems) in problem_sets
+        if isempty(test_problems) && !use_test_problems
+            println("⚠ Keine geeigneten OptimizationProblems gefunden (≥250 Variablen)")
+            continue
+        end
+        
+        println("\n" * "="^60)
+        println("Teste auf $set_name ($(length(test_problems)) Probleme)")
+        println("="^60)
+        
+        # Initialisierung der Ergebnismatrizen
+        n_problems = length(test_problems)
+        n_solvers = length(available_solvers)
+        
+        times = Matrix{Float64}(undef, n_problems, n_solvers)
+        statuses = Matrix{Symbol}(undef, n_problems, n_solvers)
+        iterations = Matrix{Int}(undef, n_problems, n_solvers)
+        
+        # Benchmark-Hauptschleife
+        for (i, problem_name) in enumerate(test_problems)
+            print("Problem $problem_name: ")
+            
             try
-                # Create problem
-                nlp = get_problem(problem_name, false)
-
-                start_time = time()
+                nlp = get_problem(problem_name, use_test_problems)
                 
-                if startswith(solver_name, "SQP")
-                    stats = sqp_method(nlp, settings)
-                    elapsed = time() - start_time
-                    success = (stats.sqp_status == kkt_point)
-                elseif solver_name == "Ipopt" && IPOPT_AVAILABLE
-                    stats = ipopt(nlp, print_level=0, tol=1e-6, max_iter=1000)
-                    elapsed = time() - start_time
-                    success = (stats.status in [:first_order, :acceptable])
-                else
-                    elapsed = Inf
-                    success = false
+                for (j, (solver_name, solver_func)) in enumerate(available_solvers)
+                    elapsed, status, niter = solver_func(nlp, MAX_TIME, TOLERANCE)
+                    
+                    times[i, j] = elapsed
+                    statuses[i, j] = status
+                    iterations[i, j] = niter
+                    
+                    if status == :solved
+                        print("$(solver_name): $(round(elapsed, digits=3))s ")
+                    else
+                        print("$(solver_name): $(status) ")
+                    end
                 end
-
-                # Store results
-                results[solver_name][problem_name] = Dict(
-                    :time => elapsed,
-                    :success => success
-                )
-
-                # Store time for performance profile
-                times[prob_idx, solver_idx] = success ? elapsed : Inf
-
-                if success
-                    println("SUCCESS ($(round(elapsed, digits=3))s)")
-                else
-                    println("FAILED")
-                end
-
+                println()
+                
             catch e
-                println("ERROR: $e")
-                results[solver_name][problem_name] = Dict(
-                    :time => Inf,
-                    :success => false
-                )
-                times[prob_idx, solver_idx] = Inf
+                println("FEHLER beim Problem $problem_name: $e")
+                times[i, :] .= Inf
+                statuses[i, :] .= :error
+                iterations[i, :] .= 0
+            end
+        end
+        
+        # Erstelle Performance-Profil
+        solver_names = [s[1] for s in available_solvers]
+        plt = performance_profile(times, solver_names,
+                                title="Finaler Löservergleich - $set_name",
+                                logscale=true)
+        
+        # Speichere Ergebnisse
+        results_dir = joinpath(@__DIR__, "..", "results")
+        if !isdir(results_dir)
+            mkpath(results_dir)
+        end
+        
+        filename = joinpath(results_dir, "final_solver_comparison_$(lowercase(set_name)).pdf")
+        savefig(plt, filename)
+        println("\n📊 Performance-Profil gespeichert: $filename")
+        
+        # Detaillierte Statistiken
+        println("\n" * "="^60)
+        println("FINALE ERGEBNISSE - $set_name")
+        println("="^60)
+        
+        for (j, solver_name) in enumerate(solver_names)
+            solved = sum(statuses[:, j] .== :solved)
+            total = n_problems
+            success_rate = round(100 * solved / total, digits=1)
+            
+            if solved > 0
+                successful_times = times[statuses[:, j] .== :solved, j]
+                avg_time = round(mean(successful_times), digits=4)
+                median_time = round(median(successful_times), digits=4)
+                total_time = round(sum(successful_times), digits=2)
+                
+                successful_iters = iterations[statuses[:, j] .== :solved, j]
+                avg_iters = round(mean(successful_iters), digits=1)
+                
+                println("🏆 $solver_name:")
+                println("   Erfolgsrate: $solved/$total ($success_rate%)")
+                println("   Durchschnittszeit: $(avg_time)s")
+                println("   Medianzeit: $(median_time)s") 
+                println("   Gesamtzeit: $(total_time)s")
+                println("   Ø Iterationen: $(avg_iters)")
+            else
+                println("❌ $solver_name:")
+                println("   Erfolgsrate: $solved/$total ($success_rate%)")
+                println("   Keine erfolgreichen Läufe")
+            end
+            println()
+        end
+        
+        # Relative Performance-Bewertung
+        if length(solver_names) >= 2
+            sqp_idx = findfirst(x -> contains(x, "SQP"), solver_names)
+            if sqp_idx !== nothing
+                sqp_success = sum(statuses[:, sqp_idx] .== :solved)
+                sqp_rate = round(100 * sqp_success / n_problems, digits=1)
+                
+                println("🎯 SQP-BEWERTUNG:")
+                if sqp_rate >= 70
+                    println("   🌟 AUSGEZEICHNET! ($sqp_rate% Erfolgsrate)")
+                    println("   Die SQP-Implementierung zeigt professionelle Qualität!")
+                elseif sqp_rate >= 50
+                    println("   ✅ GUT! ($sqp_rate% Erfolgsrate)")
+                    println("   Solide Implementierung mit guter Robustheit!")
+                elseif sqp_rate >= 30
+                    println("   ⚠ BEFRIEDIGEND ($sqp_rate% Erfolgsrate)")
+                    println("   Funktionsfähig, aber Verbesserungspotential vorhanden.")
+                else
+                    println("   ❌ VERBESSERUNGSBEDARF ($sqp_rate% Erfolgsrate)")
+                    println("   Weitere Optimierungen empfohlen.")
+                end
             end
         end
     end
-
-    # Create performance profile
-    solver_names = [name for (name, _) in solvers]
-    plt = performance_profile(times, solver_names, 
-                            title="SQP SOC Comparison",
-                            logscale=true)
-
-    # Save results
-    results_dir = joinpath(@__DIR__, "..", "results")
-    if !isdir(results_dir)
-        mkpath(results_dir)
-    end
-
-    savefig(plt, joinpath(results_dir, "sqp_soc_comparison.pdf"))
-    println("\nPerformance profile saved to results/sqp_soc_comparison.pdf")
-
-    # Print summary statistics
+    
+    # Gesamtfazit
     println("\n" * "="^60)
-    println("FINAL BENCHMARK SUMMARY")
+    println("FAZIT DES FINALEN LÖSERVERGLEICHS")
     println("="^60)
-
-    for (solver_name, _) in solvers
-        solved_count = 0
-        total_time = 0.0
-        successful_times = Float64[]
-
-        for (problem_name, result) in results[solver_name]
-            if result[:success]
-                solved_count += 1
-                total_time += result[:time]
-                push!(successful_times, result[:time])
-            end
-        end
-
-        total_problems = length(test_problem_names)
-        success_rate = (solved_count / total_problems) * 100
-        avg_time = solved_count > 0 ? total_time / solved_count : 0.0
-
-        println("\n$solver_name:")
-        println("  Problems solved: $solved_count / $total_problems ($(round(success_rate, digits=1))%)")
-        println("  Average time: $(round(avg_time, digits=3))s")
-        println("  Total time: $(round(total_time, digits=3))s")
-
-        if !isempty(successful_times)
-            println("  Median time: $(round(median(successful_times), digits=3))s")
-            println("  Min time: $(round(minimum(successful_times), digits=3))s")
-            println("  Max time: $(round(maximum(successful_times), digits=3))s")
-        end
-    end
-
-    println("\n" * "="^60)
-    println("Benchmark Completed!")
+    println("✅ Vergleich mit etablierten professionellen NLP-Lösern durchgeführt")
+    println("📊 Performance-Profile zeigen relative Stärken und Schwächen")
+    println("🎯 SQP-Implementierung wurde gegen jahrelang entwickelte Konkurrenz getestet")
+    println("📈 Ergebnisse dokumentieren aktuellen Entwicklungsstand")
+    println()
+    println("💡 HINWEIS:")
+    println("Ipopt und MadNLP wurden über viele Jahre von Expertenteams entwickelt.")
+    println("Eine Erfolgsrate von >70% für die SQP-Implementierung wäre bereits")
+    println("ein außergewöhnlicher Erfolg für ein Studienprojekt!")
     println("="^60)
 end
 
-# Run the benchmark
-large_benchmark_comparison()
+# Hauptprogramm ausführen
+println("Starte finalen Löservergleich...")
+println("Lade Vergleichslöser...")
+
+run_final_solver_comparison()
+
+println("\n🏁 Finaler Löservergleich abgeschlossen!")
+println("Alle Ergebnisse wurden im results/ Ordner gespeichert.")

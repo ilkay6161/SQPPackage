@@ -1,10 +1,37 @@
+"""
+QPInterface.jl - Einheitliche Schnittstelle zu verschiedenen QP-Solvern
+
+Dieses Modul stellt eine einheitliche Schnittstelle zu verschiedenen Quadratic Programming (QP)
+Solvern bereit, die als Subproblem-Löser im SQP-Algorithmus verwendet werden.
+
+Unterstützte QP-Solver:
+- OSQP: Operator Splitting QP-Solver (robust und zuverlässig)
+- Clarabel: Moderner Interior-Point QP-Solver  
+- Ipopt: Interior-Point NLP-Solver (für QP-Probleme)
+- MadNLP: Moderner AD-basierter NLP-Solver
+
+QP-Problemformat:
+    min  (1/2)xᵀHx + gᵀx
+    s.t. lcon ≤ Jx ≤ ucon
+         lvar ≤ x ≤ uvar
+
+Funktionen:
+- QPSolver, QPResult: Datenstrukturen für QP-Solver-Interface
+- create_qp_solver: Factory-Funktion für verschiedene Solver-Typen
+- solve_qp: Einheitliche Solve-Funktion für alle Solver
+"""
 module QPInterface
 
-using LinearAlgebra, SparseArrays, OSQP
-using ..SettingsModule
+# Importiere notwendige Pakete
+using LinearAlgebra     # Für Matrixoperationen
+using SparseArrays     # Für dünnbesetzte Matrizen  
+using OSQP            # OSQP QP-Solver
 
-# Exportiert die Hauptfunktionen und Datentypen dieses Moduls
-export solve_qp, create_qp_solver, QPSolver, QPResult
+# Importiere interne Module
+import ..SettingsModule: Settings  # Solver-Einstellungen
+
+# Exportiere die öffentlichen Schnittstellen
+export QPSolver, QPResult, create_qp_solver, solve_qp
 
 # Struktur zur Speicherung der QP-Solver-Informationen
 struct QPSolver
