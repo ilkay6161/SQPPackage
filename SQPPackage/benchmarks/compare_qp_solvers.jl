@@ -11,6 +11,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 using SQPPackage
 using Plots
 using Printf
+using Statistics
 using OptimizationProblems
 
 println("="^60)
@@ -24,8 +25,8 @@ function run_qp_solver_comparison()
         ("OptimizationProblems", false)
     ]
 
-    # QP solvers to compare
-    qp_solvers = [:osqp, :clarabel]  # Add :ipopt if available
+    # QP solvers to compare - all available QP solvers
+    qp_solvers = [:osqp, :clarabel, :ipopt, :madnlp]
 
     for (set_name, use_test_problems) in problem_sets
         println("\nTesting on $set_name...")
@@ -37,10 +38,15 @@ function run_qp_solver_comparison()
             # Filter OptimizationProblems for smaller problems (3-50 variables with constraints)
             try
                 meta = OptimizationProblems.meta
-                filtered = meta[(3 .<= meta.nvar .<= 50) .& (meta.ncon .> 0), [:name]]
-                test_problems = Symbol.(filtered.name[1:min(20, length(filtered.name))])
-            catch
-                println("OptimizationProblems not available or error occurred, skipping...")
+                # Select problems with moderate size and constraints for better QP solver comparison
+                filtered = meta[(5 .<= meta.nvar .<= 30) .& (1 .<= meta.ncon .<= 20), [:name]]
+                # Take a representative subset, prioritizing diverse problem types
+                selected_problems = filtered.name[1:min(15, length(filtered.name))]
+                test_problems = Symbol.(selected_problems)
+                println("Selected $(length(test_problems)) OptimizationProblems: $(join(test_problems, ", "))")
+            catch e
+                println("OptimizationProblems not available or error occurred: $e")
+                println("Skipping OptimizationProblems test set...")
                 continue
             end
         end
@@ -69,9 +75,10 @@ function run_qp_solver_comparison()
                         settings = Settings(
                             qp_solver=qp_solver,
                             verbose=false,
-                            max_iter=100,
-                            tol=1e-6,
-                            use_globalization=true
+                            max_iter=200,  # Increased for more thorough testing
+                            tol=1e-8,      # Tighter tolerance
+                            use_globalization=true,
+                            hessian_convexification=:lm  # Use consistent convexification
                         )
 
                         # Time the solver
@@ -82,14 +89,17 @@ function run_qp_solver_comparison()
                         # Store time if successful, otherwise infinity
                         if stats.sqp_status == kkt_point
                             times[i, j] = elapsed
+                            print("$(qp_solver): $(round(elapsed, digits=3))s [$(stats.niter) iter] ")
                         else
                             times[i, j] = Inf
+                            print("$(qp_solver): FAIL [$(stats.sqp_status)] ")
                         end
-
-                        print("$(qp_solver): $(round(elapsed, digits=3))s ")
                     catch e
                         times[i, j] = Inf
-                        print("$(qp_solver): FAIL ")
+                        print("$(qp_solver): ERROR [$(typeof(e))] ")
+                        if qp_solver == :ipopt || qp_solver == :madnlp
+                            print("(QuadraticModels may not be available) ")
+                        end
                     end
                 end
                 println()
@@ -118,12 +128,24 @@ function run_qp_solver_comparison()
 
         # Print summary statistics
         println("\nSummary for $set_name:")
+        println("="^50)
         for (j, solver) in enumerate(qp_solvers)
             solved = sum(isfinite.(times[:, j]))
             total = size(times, 1)
-            avg_time = mean(times[isfinite.(times[:, j]), j])
-            println("  $solver: $solved/$total problems solved, avg time: $(round(avg_time, digits=3))s")
+            success_rate = round(100 * solved / total, digits=1)
+            
+            if solved > 0
+                finite_times = times[isfinite.(times[:, j]), j]
+                avg_time = round(mean(finite_times), digits=4)
+                median_time = round(median(finite_times), digits=4)
+                min_time = round(minimum(finite_times), digits=4)
+                max_time = round(maximum(finite_times), digits=4)
+                println("  $solver: $solved/$total solved ($success_rate%) | Avg: $(avg_time)s | Med: $(median_time)s | Range: [$(min_time)s, $(max_time)s]")
+            else
+                println("  $solver: $solved/$total solved ($success_rate%) | No successful runs")
+            end
         end
+        println("="^50)
     end
 end
 

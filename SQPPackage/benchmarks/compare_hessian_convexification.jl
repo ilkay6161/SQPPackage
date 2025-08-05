@@ -11,6 +11,7 @@ using SQPPackage
 using SQPPackage.Benchmarking
 using Plots
 using Printf
+using Statistics
 using OptimizationProblems
 
 println("="^60)
@@ -36,10 +37,15 @@ function run_hessian_convexification_comparison()
         else
             try
                 meta = OptimizationProblems.meta
-                filtered = meta[(3 .<= meta.nvar .<= 50) .& (meta.ncon .> 0), [:name]]
-                test_problems = Symbol.(filtered.name[1:min(20, length(filtered.name))])
-            catch
-                println("OptimizationProblems not available or error occurred, skipping...")
+                # Select problems with moderate size and constraints for better convexification comparison
+                filtered = meta[(5 .<= meta.nvar .<= 30) .& (1 .<= meta.ncon .<= 20), [:name]]
+                # Take a representative subset focusing on problems that benefit from convexification
+                selected_problems = filtered.name[1:min(15, length(filtered.name))]
+                test_problems = Symbol.(selected_problems)
+                println("Selected $(length(test_problems)) OptimizationProblems: $(join(test_problems, ", "))")
+            catch e
+                println("OptimizationProblems not available or error occurred: $e")
+                println("Skipping OptimizationProblems test set...")
                 continue
             end
         end
@@ -68,9 +74,9 @@ function run_hessian_convexification_comparison()
                         settings = Settings(
                             hessian_convexification=strategy,
                             verbose=false,
-                            max_iter=100,
-                            tol=1e-6,
-                            qp_solver=:osqp,
+                            max_iter=200,  # Increased for thorough testing
+                            tol=1e-8,      # Tighter tolerance
+                            qp_solver=:osqp,  # Use consistent QP solver
                             use_globalization=true
                         )
 
@@ -82,14 +88,14 @@ function run_hessian_convexification_comparison()
                         # Store time if successful, otherwise infinity
                         if stats.sqp_status == kkt_point
                             times[i, j] = elapsed
+                            print("$(strategy): $(round(elapsed, digits=3))s [$(stats.niter) iter] ")
                         else
                             times[i, j] = Inf
+                            print("$(strategy): FAIL [$(stats.sqp_status)] ")
                         end
-
-                        print("$(strategy): $(round(elapsed, digits=3))s ")
                     catch e
                         times[i, j] = Inf
-                        print("$(strategy): FAIL ")
+                        print("$(strategy): ERROR [$(typeof(e))] ")
                     end
                 end
                 println()
@@ -118,16 +124,24 @@ function run_hessian_convexification_comparison()
 
         # Print summary statistics
         println("\nSummary for $set_name:")
+        println("="^60)
         for (j, strategy) in enumerate(convex_strategies)
             solved = sum(isfinite.(times[:, j]))
             total = size(times, 1)
+            success_rate = round(100 * solved / total, digits=1)
+            
             if solved > 0
-                avg_time = mean(times[isfinite.(times[:, j]), j])
-                println("  $strategy: $solved/$total problems solved, avg time: $(round(avg_time, digits=3))s")
+                finite_times = times[isfinite.(times[:, j]), j]
+                avg_time = round(mean(finite_times), digits=4)
+                median_time = round(median(finite_times), digits=4)
+                min_time = round(minimum(finite_times), digits=4)
+                max_time = round(maximum(finite_times), digits=4)
+                println("  $strategy: $solved/$total solved ($success_rate%) | Avg: $(avg_time)s | Med: $(median_time)s | Range: [$(min_time)s, $(max_time)s]")
             else
-                println("  $strategy: $solved/$total problems solved")
+                println("  $strategy: $solved/$total solved ($success_rate%) | No successful runs")
             end
         end
+        println("="^60)
     end
 end
 
