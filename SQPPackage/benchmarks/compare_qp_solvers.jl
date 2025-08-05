@@ -21,9 +21,11 @@ Methodik:
 
 # Füge das übergeordnete Verzeichnis zum Ladepfad hinzu, um SQPPackage zu finden
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
+push!(LOAD_PATH, @__DIR__)
 
 # Importiere alle benötigten Pakete
 using SQPPackage          # Unser Hauptpaket mit der SQP-Implementierung
+using Benchmarking       # Lokales Benchmarking-Modul
 using Plots              # Für die Erstellung von Diagrammen und Performance-Profilen
 using Printf             # Für formatierte Ausgaben
 using Statistics         # Für statistische Funktionen (Mittelwert, Median)
