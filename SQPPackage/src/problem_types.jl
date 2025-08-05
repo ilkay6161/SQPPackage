@@ -1,4 +1,28 @@
-module ProblemTypes
+"""
+ProblemTypesModule.jl - Grundlegende Datentypen für Optimierungsprobleme
+
+Dieses Modul definiert die grundlegenden Datenstrukturen und Typen,
+die für die Darstellung und Bearbeitung von Optimierungsproblemen
+im SQP-Solver verwendet werden.
+
+Zweck:
+- Vereinheitlichung der Problemrepräsentation
+- Type-Safety für numerische Berechnungen
+- Schnittstelle zu externen NLP-Modellen
+"""
+
+# Grundlegende numerische Typen für den SQP-Solver
+const FloatType = Float64          # Standard-Gleitkommatyp für alle Berechnungen
+const IntType = Int               # Standard-Ganzzahltyp für Indizes und Zähler
+
+# Vektor- und Matrixtypen für effiziente lineare Algebra
+const VectorType = Vector{FloatType}      # Standardvektortyp
+const MatrixType = Matrix{FloatType}      # Standardmatrixtyp
+
+# Sparse-Typen für große, dünnbesetzte Probleme
+const SparseMatrixType = SparseMatrixCSC{FloatType, IntType}
+const SparseVectorType = SparseVector{FloatType, IntType}
+
 
 # Exportiere die abstrakten Typen und Strukturen, damit sie außerhalb dieses Moduls sichtbar sind.
 export AbstractNLPModel, OptimizationProblem

@@ -1,13 +1,32 @@
+"""
+ResidualsModule.jl - KKT-Residuen-Berechnung für den SQP-Solver
+
+Dieses Modul implementiert die Berechnung der Karush-Kuhn-Tucker (KKT) Residuen,
+die zur Überprüfung der Optimalitätsbedingungen und zur Konvergenzkontrolle
+des SQP-Algorithmus verwendet werden.
+
+KKT-Bedingungen:
+1. Stationarität: ∇f(x) + J(x)ᵀy = 0
+2. Primal Feasibility: c(x) = 0 
+3. Dual Feasibility: z ≥ 0
+4. Complementarity: zᵀs = 0
+
+Funktionen:
+- get_primal_residual: Berechnung der primalen Residuen (Constraint-Verletzung)
+- get_dual_residual: Berechnung der dualen Residuen (Gradientenresiduen)  
+- compute_kkt_residuals: Vollständige KKT-Residuen-Berechnung
+"""
 module ResidualsModule
 
-using ADNLPModels
-using NLPModels
-using LinearAlgebra
-using NLPModels
+# Importiere notwendige Pakete für lineare Algebra und NLP-Modelle
+using LinearAlgebra   # Für Normen und Matrixoperationen
+using NLPModels      # Für NLP-Modell-Schnittstelle
 
-# Exportiert die Hauptfunktionen dieses Moduls
-export get_primal_residual, get_dual_residual, get_total_complementarity_residual, 
-       compute_kkt_residuals, constraint_violation
+# Importiere interne Module
+import ..SettingsModule: Settings  # Solver-Einstellungen
+
+# Exportiere die öffentlichen Funktionen
+export get_primal_residual, get_dual_residual, compute_kkt_residuals
 
 # Funktion zur Berechnung der Verletzung der Constraints (c) eines Modells
 function constraint_violation(nlp::ADNLPModel, x::Vector{Float64})
